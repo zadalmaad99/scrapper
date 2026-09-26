@@ -8649,6 +8649,8 @@
     </div>
   </div>
 
+  ${bestTimeCardHtml(posts)}
+
   <div class="grid g2">
     <div class="card">
       <div class="font-bold text-pink mb2">🏆 Most Liked</div>
@@ -8663,6 +8665,107 @@
       ${maxComments.url ? `<a href="${maxComments.url}" target="_blank" class="text-sm text-primary mt1" style="display:block">Open Post ↗</a>` : ""}
     </div>
   </div>`;
+      }
+
+      // ════════════════════════════════════════════
+      // BEST TIME TO POST — day × hour heatmap from existing posts
+      // Metric = average engagement per post (likes + comments + shares) in each
+      // slot, so a slot doesn't win just because it has more posts. Times use the
+      // viewer's device timezone.
+      // ════════════════════════════════════════════
+      function computeBestTimes(posts) {
+        const grid = Array.from({ length: 7 }, () =>
+          Array.from({ length: 24 }, () => ({ sum: 0, count: 0 })),
+        );
+        let used = 0;
+        posts.forEach((p) => {
+          const ms = parseTimestamp(p.postedAt);
+          if (!ms) return;
+          const d = new Date(ms);
+          const cell = grid[d.getDay()][d.getHours()];
+          cell.sum += (p.likesCount || 0) + (p.commentsCount || 0) + (p.sharesCount || 0);
+          cell.count += 1;
+          used += 1;
+        });
+        const avg = (c) => (c.count ? c.sum / c.count : 0);
+
+        const slots = [];
+        for (let d = 0; d < 7; d++)
+          for (let h = 0; h < 24; h++)
+            if (grid[d][h].count) slots.push({ d, h, avg: avg(grid[d][h]), n: grid[d][h].count });
+
+        // Slots backed by 2+ posts always outrank single-post slots (one lucky
+        // post must not beat a well-supported time). Single-post slots only fill
+        // remaining places, and flag the result as low confidence.
+        const byScore = (a, b) => b.avg - a.avg || b.n - a.n;
+        const solid = slots.filter((x) => x.n >= 2).sort(byScore);
+        const weak = slots.filter((x) => x.n < 2).sort(byScore);
+        const top = solid.slice(0, 3);
+        let lowConfidence = false;
+        if (top.length < 3) { top.push(...weak.slice(0, 3 - top.length)); lowConfidence = true; }
+
+        const dayAgg = Array.from({ length: 7 }, () => ({ sum: 0, count: 0 }));
+        const hourAgg = Array.from({ length: 24 }, () => ({ sum: 0, count: 0 }));
+        for (let d = 0; d < 7; d++)
+          for (let h = 0; h < 24; h++) {
+            dayAgg[d].sum += grid[d][h].sum; dayAgg[d].count += grid[d][h].count;
+            hourAgg[h].sum += grid[d][h].sum; hourAgg[h].count += grid[d][h].count;
+          }
+        const bestOf = (arr) => {
+          // Same rule: prefer buckets with 2+ posts, fall back to any bucket.
+          const minN = arr.some((c) => c.count >= 2) ? 2 : 1;
+          let best = -1, bestAvg = -1;
+          arr.forEach((c, i) => { if (c.count >= minN && avg(c) > bestAvg) { bestAvg = avg(c); best = i; } });
+          return best < 0 ? null : { i: best, avg: bestAvg, n: arr[best].count };
+        };
+        const maxAvg = slots.reduce((m, x) => Math.max(m, x.avg), 0);
+        return { grid, avg, used, top, lowConfidence, maxAvg, bestDay: bestOf(dayAgg), bestHour: bestOf(hourAgg) };
+      }
+
+      function bestTimeCardHtml(posts) {
+        const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const hLabel = (h) => (h === 0 ? "12 AM" : h < 12 ? h + " AM" : h === 12 ? "12 PM" : (h - 12) + " PM");
+        const r = computeBestTimes(posts);
+        if (r.used < 5) {
+          return '<div class="card mb3"><div class="font-bold mb2">⏰ Best Time to Post</div>' +
+            '<div class="empty" style="padding:16px;font-size:12px;color:var(--dim)">Need at least 5 posts with a posting date to estimate the best time (found ' + r.used + ').</div></div>';
+        }
+        const medals = ["🥇", "🥈", "🥉"];
+        const topHtml = r.top.map((t, i) =>
+          '<div style="flex:1;min-width:140px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+          '<div style="font-size:18px">' + medals[i] + '</div>' +
+          '<div style="font-weight:700;font-size:14px">' + DAYS[t.d] + ' · ' + hLabel(t.h) + '</div>' +
+          '<div style="font-size:11px;color:var(--muted)">avg ' + fmt(Math.round(t.avg)) + ' / post · ' + t.n + ' post' + (t.n > 1 ? 's' : '') + '</div></div>'
+        ).join("");
+        const chip = (label, v, fmtI) => v
+          ? '<span style="font-size:12px;color:var(--muted)">' + label + ': <b style="color:var(--text)">' + fmtI(v.i) + '</b> <span style="opacity:.7">(avg ' + fmt(Math.round(v.avg)) + ')</span></span>'
+          : "";
+        let head = '<div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-bottom:10px">' +
+          chip("Best day", r.bestDay, (i) => DAYS[i]) + chip("Best hour", r.bestHour, hLabel) + '</div>';
+
+        const cellW = 22;
+        let hourRow = '<div style="display:flex;margin-left:34px">';
+        for (let h = 0; h < 24; h++)
+          hourRow += '<div style="width:' + cellW + 'px;flex:none;text-align:center;font-size:9px;color:var(--dim)">' + (h % 3 === 0 ? h : "") + '</div>';
+        hourRow += '</div>';
+        let rows = "";
+        for (let d = 0; d < 7; d++) {
+          rows += '<div style="display:flex;align-items:center;margin-top:2px"><div style="width:34px;flex:none;font-size:10px;color:var(--muted)">' + DAYS[d] + '</div>';
+          for (let h = 0; h < 24; h++) {
+            const c = r.grid[d][h];
+            const a = r.avg(c);
+            const alpha = c.count && r.maxAvg ? 0.15 + 0.85 * (a / r.maxAvg) : 0;
+            const bg = c.count ? 'rgba(0,200,248,' + alpha.toFixed(2) + ')' : 'var(--bg3)';
+            const tip = DAYS[d] + ' ' + hLabel(h) + (c.count ? ' — avg ' + fmt(Math.round(a)) + ' · ' + c.count + ' post' + (c.count > 1 ? 's' : '') : ' — no posts');
+            rows += '<div title="' + tip + '" style="width:' + (cellW - 2) + 'px;height:' + (cellW - 2) + 'px;margin-right:2px;flex:none;border-radius:4px;background:' + bg + '"></div>';
+          }
+          rows += '</div>';
+        }
+        const note = '<div style="font-size:10px;color:var(--dim);margin-top:8px">Based on ' + r.used + ' dated posts · avg engagement per post (likes + comments + shares) · times in your device timezone' +
+          (r.lowConfidence ? ' · <span style="color:var(--yellow)">low confidence — few posts per slot</span>' : '') + '</div>';
+        return '<div class="card mb3"><div class="font-bold mb2">⏰ Best Time to Post</div>' + head +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' + topHtml + '</div>' +
+          '<div style="overflow-x:auto;padding-bottom:4px"><div style="min-width:' + (34 + 24 * cellW) + 'px">' + hourRow + rows + '</div></div>' + note + '</div>';
       }
 
       const chartInstances = {};
