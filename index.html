@@ -2771,6 +2771,15 @@
           font-size: 16px;
         }
       }
+      .pv-chip{background:var(--bg3);color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;line-height:1.4}
+      .pv-chip.on{background:rgba(0,200,248,.15);color:var(--primary);border-color:var(--primary)}
+      .pv-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+      .pv-lbl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:6px}
+      .pv-sub{font-size:11px;color:var(--muted)}
+      .pv-sec{margin-top:12px}
+      .pv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:4px 18px;margin-top:6px}
+      .pv-num{width:78px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px}
+      .pv-in{background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px}
     </style>
   </head>
   <body>
@@ -3269,7 +3278,7 @@
         if (!page) return null;
         const followers = Number(page.followersCount) || 0;
         if (!followers) return null;
-        const L = post.likesCount    || 0;
+        const L = pvIsLikesHidden(post) ? 0 : (post.likesCount || 0); // hidden likes: comments-only ER
         const C = post.commentsCount || 0;
         const S = post.sharesCount   || 0;
         const R = post.repostsCount  || 0;
@@ -3471,7 +3480,7 @@
 
       async function cleanupUnusedCloudinaryImages() {
         if (!CLEANUP_WORKER_URL) {
-          alert("لازم أولاً تنشر Cloudflare Worker وتحط رابطه في CLEANUP_WORKER_URL داخل الكود (راجع cloudinary-cleanup-worker.js).");
+          showToast("لازم أولاً تنشر Cloudflare Worker وتحط رابطه في CLEANUP_WORKER_URL داخل الكود (راجع cloudinary-cleanup-worker.js).");
           return;
         }
         const btn = document.getElementById("cleanup-cloudinary-btn");
@@ -3507,7 +3516,7 @@
           showToast(`✓ تم حذف ${result.deleted.length} صورة${result.errors.length ? ` (${result.errors.length} فشلت)` : ""}`);
         } catch (err) {
           console.error("cleanupUnusedCloudinaryImages failed", err);
-          alert("حدث خطأ أثناء التنظيف: " + (err && err.message ? err.message : err));
+          showToast("حدث خطأ أثناء التنظيف: " + (err && err.message ? err.message : err));
         } finally {
           if (btn) { btn.disabled = false; btn.textContent = "🧹 Cleanup Cloudinary"; }
         }
@@ -3516,34 +3525,46 @@
       // ⚠️ خطر جداً: يحذف كل صورة على Cloudinary تحت مجلد scrapper/ بلا استثناء،
       // حتى لو كانت مستخدمة حالياً في منشورات حية. كلمة السر هنا حماية شكلية ضد
       // الضغط بالخطأ فقط (الكود مرئي بالمتصفح، ليست حماية أمنية حقيقية).
-      async function deleteAllCloudinaryImages() {
+      function deleteAllCloudinaryImages() {
         if (!CLEANUP_WORKER_URL) {
-          alert("لازم أولاً تنشر Cloudflare Worker وتحط رابطه في CLEANUP_WORKER_URL داخل الكود.");
+          showToast("Deploy the Cloudflare Worker and set CLEANUP_WORKER_URL first.");
           return;
         }
-        const pwd = prompt("⚠️ هذا سيحذف كل صور Cloudinary نهائياً (حتى المستخدمة حالياً). أدخل كلمة السر للمتابعة:");
-        if (pwd === null) return;
-        if (pwd !== "123456") { alert("كلمة سر خاطئة — تم الإلغاء."); return; }
+        // Password is asked in an in-page modal: the Android WebView does not support prompt().
+        showModal(`
+    <div class="modal-title">🔥 Delete ALL Cloudinary images <button onclick="closeModal()" style="background:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button></div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:10px">This permanently deletes every image on Cloudinary, even the ones your posts still use. Enter the password to continue.</div>
+    <div class="form-row"><input id="dac-pwd" type="password" placeholder="Password" autocomplete="off"></div>
+    <div class="flex gap2 justify-between mt3">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="deleteAllCloudinaryStep2()">Continue</button>
+    </div>`);
+        setTimeout(() => { const el = document.getElementById("dac-pwd"); if (el) el.focus(); }, 50);
+      }
 
-        const confirmed1 = confirm("تأكيد أول: سيتم حذف كل صور Cloudinary بلا استثناء ولا رجعة. متأكد؟");
-        if (!confirmed1) { showToast("تم الإلغاء"); return; }
-        const confirmed2 = confirm("تأكيد أخير: هذا الإجراء نهائي ولا يمكن التراجع عنه إطلاقاً. اضغط موافق للمتابعة الفعلية.");
-        if (!confirmed2) { showToast("تم الإلغاء"); return; }
+      // ⚠ Password is only a guard against accidental clicks (the code is visible in the
+      // page). The real protection is the Firebase-token check inside the Worker.
+      async function deleteAllCloudinaryStep2() {
+        const el = document.getElementById("dac-pwd");
+        if (!el || el.value !== "123456") { showToast("Wrong password"); return; }
+        closeModal();
+        if (!confirm("First confirmation: every Cloudinary image will be deleted for good. Continue?")) { showToast("Cancelled"); return; }
+        if (!confirm("Final confirmation: this cannot be undone. Press OK to really delete everything.")) { showToast("Cancelled"); return; }
 
         const btn = document.getElementById("delete-all-cloudinary-btn");
-        if (btn) { btn.disabled = true; btn.textContent = "🔥 جارِ الحذف الكامل..."; }
+        if (btn) { btn.disabled = true; btn.textContent = "🔥 Deleting…"; }
         try {
           const res = await fetch(`${CLEANUP_WORKER_URL}/delete-all`, {
             method: "POST",
             headers: await workerAuthHeaders(),
             body: JSON.stringify({}),
           });
-          if (!res.ok) throw new Error(`فشل الحذف (${res.status}): ${await res.text().catch(() => "")}`);
+          if (!res.ok) throw new Error(`Delete failed (${res.status}): ${await res.text().catch(() => "")}`);
           const result = await res.json();
-          showToast(`✓ تم حذف ${result.deleted.length} صورة من أصل ${result.totalFound}${result.errors.length ? ` (${result.errors.length} فشلت)` : ""}`);
+          showToast(`✓ Deleted ${result.deleted.length} of ${result.totalFound} images${result.errors.length ? ` (${result.errors.length} failed)` : ""}`);
         } catch (err) {
           console.error("deleteAllCloudinaryImages failed", err);
-          alert("حدث خطأ أثناء الحذف: " + (err && err.message ? err.message : err));
+          showToast("⚠ Delete failed: " + (err && err.message ? err.message : err));
         } finally {
           if (btn) { btn.disabled = false; btn.textContent = "🔥 Delete ALL Cloudinary"; }
         }
@@ -3600,6 +3621,7 @@
         if (e.detail.signedIn) {
           loginScreen.style.display = "none";
           loadState();
+          pvStartSync();
           const _hasLocalData = state.pages.length > 0 || state.posts.length > 0 || state.uploads.length > 0;
           if (_hasLocalData) {
             // عندنا نسخة محلية — نعرضها فوراً بدون انتظار، وبنفس الوقت نطلق
@@ -3625,6 +3647,7 @@
             setInterval(updateUsageBadge, 60 * 1000);
           }
         } else {
+          pvStopSync();
           state = { pages: [], posts: [], uploads: [], archiveFolders: [], nextId: 1 };
           loginScreen.style.display = "flex";
           app.style.display = "none";
@@ -7870,7 +7893,9 @@
         window.__dupMap  = dupMap;
         window.__uploads = state.uploads;
 
-        const postCards = applySort(posts, "posts", page)
+        const viewPosts = applyPostView(posts, page);
+        const postCards = viewPosts
+          .slice(0, pvShown)
           .map((p) => {
             const imgSrc = p.cloudinaryUrl || p.localImagePath || p.displayUrl;
             // الضغط على صورة المنشور يفتح نافذة التعديل (نفس زر "Edit / View Post")
@@ -8003,7 +8028,7 @@
           <span style="font-size:11px;font-weight:700;color:var(--primary);font-family:monospace">${p.postedAt ? fmtAge(p.postedAt) : ""}</span>
         </div>
         <div class="post-stats">
-          <div class="post-stat"><span class="post-stat-icon" style="color:var(--pink)">❤️</span>${fmt(p.likesCount)}</div>
+          <div class="post-stat"><span class="post-stat-icon" style="color:var(--pink)">❤️</span>${pvLikesText(p)}</div>
           <div class="post-stat"><span class="post-stat-icon" style="color:var(--blue)">💬</span>${fmt(p.commentsCount)}</div>
           <div class="post-stat ${hasReposts ? "" : "na"}"><span class="post-stat-icon" style="color:var(--purple)">🔁</span>${hasReposts ? fmt(p.repostsCount) : "—"}</div>
           <div class="post-stat ${hasShares ? "" : "na"}"><span class="post-stat-icon" style="color:var(--green)">↗️</span>${hasShares ? fmt(p.sharesCount) : "—"}</div>
@@ -8130,6 +8155,8 @@
 
   ${renderProfileCard(page)}
 
+  ${pvHiddenBannerHtml(posts)}
+
   <div class="grid gA3 mb3">
     <details class="card collapsible-card" id="page-detail-notes-${pageId}">
       <summary class="font-bold collapsible-summary">📝 Admin Notes</summary>
@@ -8234,7 +8261,7 @@
               <div class="post-caption" dir="auto" style="opacity:.7">${p.caption ? escHtml(p.caption).slice(0,80) : '<span style="opacity:.4;font-style:italic">No caption</span>'}</div>
               ${p.postedAt ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">${fmtDate(p.postedAt)}</div>` : ""}
               <div class="post-stats" style="margin:6px 0">
-                <div class="post-stat"><span class="post-stat-icon" style="color:var(--pink)">❤️</span>${fmt(p.likesCount)}</div>
+                <div class="post-stat"><span class="post-stat-icon" style="color:var(--pink)">❤️</span>${pvLikesText(p)}</div>
                 <div class="post-stat"><span class="post-stat-icon" style="color:var(--blue)">💬</span>${fmt(p.commentsCount)}</div>
               </div>
             </div>
@@ -8274,39 +8301,15 @@
 
   <div>
     <div class="flex justify-between items-center mb2 flex-wrap gap2">
-      <div class="font-bold">Posts Archive (${posts.length})</div>
-      ${
-        posts.length > 0
-          ? `
-      <div style="display:flex;flex-direction:column;align-items:flex-end">
-        <div class="sort-bar">
-          <span class="text-sm text-muted">Sort by:</span>
-          ${customSelectHtml(
-            "post-sort-select",
-            [
-              ["postedAt", "Date Posted"],
-              ["likesCount", "Likes"],
-              ["commentsCount", "Comments"],
-              ["sharesCount", "Shares"],
-              ["repostsCount", "Reposts"],
-              ["engagementRate", "ER %"],
-            ],
-            sortSettings.posts.key,
-            "selectPostSortKey",
-          )}
-          <button class="sort-dir-btn" onclick="toggleSortDir('posts')">${sortDirIcon("posts")}</button>
-          <button class="btn ${postSelectMode ? "btn-primary" : "btn-ghost"} btn-sm" onclick="toggleSelectMode()">☑ ${postSelectMode ? "Cancel" : "Select"}</button>
-        </div>
-        ${noDateWarning}
-      </div>`
-          : ""
-      }
+      <div class="font-bold">Posts Archive (${viewPosts.length}${viewPosts.length !== posts.length ? " of " + posts.length : ""})</div>
+      ${posts.length > 0 ? `<button class="btn ${postSelectMode ? "btn-primary" : "btn-ghost"} btn-sm" onclick="toggleSelectMode()">☑ ${postSelectMode ? "Cancel" : "Select"}</button>` : ""}
     </div>
+    ${posts.length > 0 ? pvPanelHtml(posts, viewPosts, page) : ""}
     ${
       postSelectMode
         ? `<div class="bulk-select-bar">
         <span style="font-size:13px;font-weight:700">${selectedPostIds.size} selected</span>
-        <button class="btn btn-ghost btn-sm" onclick="selectAllVisiblePosts(${JSON.stringify(posts.map(p => p.id))})">Select All (${posts.length})</button>
+        <button class="btn btn-ghost btn-sm" onclick="selectAllVisiblePosts(${JSON.stringify(viewPosts.map(p => p.id))})">Select All (${viewPosts.length})</button>
         <button class="btn btn-ghost btn-sm" onclick="clearPostSelection()">Clear</button>
         <div style="flex:1"></div>
         <button class="btn btn-danger btn-sm" ${selectedPostIds.size === 0 ? "disabled" : ""} onclick="bulkSoftDeleteSelectedPosts()">🗑 Delete Selected (${selectedPostIds.size})</button>
@@ -8316,7 +8319,9 @@
     ${
       posts.length === 0
         ? `<div class="empty"><div class="empty-icon">🖼</div><div>No posts yet</div><button class="btn btn-primary mt2" onclick="navigate('upload',${pageId})">⬆ Upload Data File</button></div>`
-        : `<div class="post-grid">${postCards}</div>`
+        : viewPosts.length === 0
+          ? `<div class="empty"><div class="empty-icon">🔎</div><div>No posts match your filters</div><button class="btn btn-primary mt2" onclick="pvResetAll()">Reset filters</button></div>`
+          : `<div class="post-grid">${postCards}</div>${pvMoreHtml(viewPosts.length)}`
     }
   </div>`;
       }
@@ -8673,7 +8678,7 @@
       // slot, so a slot doesn't win just because it has more posts. Times use the
       // viewer's device timezone.
       // ════════════════════════════════════════════
-      function computeBestTimes(posts) {
+      function computeBestTimes(posts, mode) {
         const grid = Array.from({ length: 7 }, () =>
           Array.from({ length: 24 }, () => ({ sum: 0, count: 0 })),
         );
@@ -8683,7 +8688,7 @@
           if (!ms) return;
           const d = new Date(ms);
           const cell = grid[d.getDay()][d.getHours()];
-          cell.sum += (p.likesCount || 0) + (p.commentsCount || 0) + (p.sharesCount || 0);
+          cell.sum += mode === "comments" ? (p.commentsCount || 0) : (p.likesCount || 0) + (p.commentsCount || 0) + (p.sharesCount || 0);
           cell.count += 1;
           used += 1;
         });
@@ -8725,7 +8730,10 @@
       function bestTimeCardHtml(posts) {
         const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
         const hLabel = (h) => (h === 0 ? "12 AM" : h < 12 ? h + " AM" : h === 12 ? "12 PM" : (h - 12) + " PM");
-        const r = computeBestTimes(posts);
+        const hid = pvHiddenSet(posts);
+        let pool = posts.filter((p) => !hid.set.has(p.id)), mode = "all", excl = hid.set.size;
+        if (pool.length < 5 && hid.set.size) { pool = posts; mode = "comments"; excl = 0; }
+        const r = computeBestTimes(pool, mode);
         if (r.used < 5) {
           return '<div class="card mb3"><div class="font-bold mb2">⏰ Best Time to Post</div>' +
             '<div class="empty" style="padding:16px;font-size:12px;color:var(--dim)">Need at least 5 posts with a posting date to estimate the best time (found ' + r.used + ').</div></div>';
@@ -8761,7 +8769,8 @@
           }
           rows += '</div>';
         }
-        const note = '<div style="font-size:10px;color:var(--dim);margin-top:8px">Based on ' + r.used + ' dated posts · avg engagement per post (likes + comments + shares) · times in your device timezone' +
+        const note = '<div style="font-size:10px;color:var(--dim);margin-top:8px">Based on ' + r.used + ' dated posts · avg ' + (mode === "comments" ? 'comments per post (likes are hidden on this page)' : 'engagement per post (likes + comments + shares)') + ' · times in your device timezone' +
+          (excl ? ' · ' + excl + ' hidden-likes posts excluded' : '') +
           (r.lowConfidence ? ' · <span style="color:var(--yellow)">low confidence — few posts per slot</span>' : '') + '</div>';
         return '<div class="card mb3"><div class="font-bold mb2">⏰ Best Time to Post</div>' + head +
           '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' + topHtml + '</div>' +
@@ -9746,11 +9755,12 @@
           displayUrl: get("image") ? String(get("image")) : null,
           localImagePath: null,
           caption: String(get("caption") || "") || null,
-          likesCount: toNum(get("likes")),
+          ...pvParseLikes(get("likes")),
           commentsCount: toNum(get("comments")),
           sharesCount: toNum(get("shares")),
           repostsCount: toNum(get("reposts")),
           postedAt,
+          ...pvFormatFields(row),
         };
       }
 
@@ -9869,6 +9879,7 @@
 
       function toNum(v) {
         if (v == null || v === "") return 0;
+        if (/^\s*-/.test(String(v))) return 0; // negatives (e.g. hidden -1) are not real counts
         const n = parseInt(String(v).replace(/[^0-9]/g, ""));
         return isNaN(n) ? 0 : n;
       }
@@ -10120,6 +10131,556 @@
         // Widen the modal for side-by-side view
         const modalBox = document.querySelector(".modal");
         if (modalBox) modalBox.style.maxWidth = Math.min(300 * dups.length + 48, window.innerWidth - 40) + "px";
+      }
+
+      // ════════════════════════════════════════════════════════════════════
+      // POST VIEW — advanced multi-level sort + filters for the Posts Archive.
+      // Sort/filter settings and saved views are stored locally AND synced through
+      // Firestore (config/postView) so the Android app and the web version always
+      // show the same view. Last write wins; own writes are ignored via device id.
+      // ════════════════════════════════════════════════════════════════════
+      const POSTVIEW_KEY = "scrapper_postview_v1";
+      const PV_PAGE = 60; // cards rendered per "page" (keeps 900+ post pages fast)
+      const PV_TYPE_OPTIONS = ["Dress", "Jacket", "Set_skirt", "Set_Pants", "Track", "Caloon", "Pants", "Badlason", "Bloze"];
+      const PV_SORT_KEYS = [
+        ["postedAt", "Date Posted"],
+        ["likesCount", "Likes"],
+        ["commentsCount", "Comments"],
+        ["sharesCount", "Shares"],
+        ["repostsCount", "Reposts"],
+        ["engagementRate", "ER %"],
+        ["totalEngagement", "Total engagement"],
+        ["captionLength", "Caption length"],
+        ["rating", "Rating"],
+        ["openCount", "Times opened"],
+      ];
+      const PV_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const POSTVIEW_DEVICE_ID = (() => {
+        try {
+          let d = localStorage.getItem("scrapper_device_id");
+          if (!d) {
+            d = "d" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+            localStorage.setItem("scrapper_device_id", d);
+          }
+          return d;
+        } catch (e) { return "d" + Math.random().toString(36).slice(2, 10); }
+      })();
+
+      function pvDefault() {
+        return { sort: [{ key: "likesCount", dir: "desc" }], filters: {}, presets: [], updatedAt: 0 };
+      }
+      let postView = pvDefault();
+      let pvOpen = false;
+      let pvShown = PV_PAGE;
+      let pvSyncLabel = "💾 Saved on this device";
+      let _pvSaveTimer = null, _pvDeb = null, _pvUnsub = null;
+
+      function pvClone(x) { return JSON.parse(JSON.stringify(x)); }
+      function pvLoadLocal() {
+        try {
+          const raw = localStorage.getItem(POSTVIEW_KEY);
+          if (raw) postView = Object.assign(pvDefault(), JSON.parse(raw));
+        } catch (e) {}
+        if (!Array.isArray(postView.sort) || !postView.sort.length) postView.sort = pvDefault().sort;
+        if (!postView.filters || typeof postView.filters !== "object") postView.filters = {};
+        if (!Array.isArray(postView.presets)) postView.presets = [];
+      }
+      pvLoadLocal();
+
+      // ── persistence + cross-device sync ──────────────────────────────────
+      function pvSave() {
+        postView.updatedAt = Date.now();
+        try { localStorage.setItem(POSTVIEW_KEY, JSON.stringify(postView)); } catch (e) {}
+        clearTimeout(_pvSaveTimer);
+        _pvSaveTimer = setTimeout(pvPushRemote, 900);
+      }
+      async function pvPushRemote() {
+        if (!window.FB || !window.FB.auth || !window.FB.auth.currentUser) return;
+        try {
+          const payload = pvClone({
+            sort: postView.sort, filters: postView.filters, presets: postView.presets,
+            updatedAt: postView.updatedAt, by: POSTVIEW_DEVICE_ID,
+          });
+          await window.FB.setDoc(window.FB.doc(window.FB.db, "config", "postView"), payload);
+          trackUsage("writes", 1);
+          pvSyncLabel = "☁ Synced across your devices";
+        } catch (e) {
+          console.warn("postView sync write failed", e);
+          pvSyncLabel = "⚠ Sync failed — saved on this device only";
+        }
+      }
+      function pvStartSync() {
+        if (_pvUnsub || !window.FB || !window.FB.onSnapshot) return;
+        try {
+          _pvUnsub = window.FB.onSnapshot(
+            window.FB.doc(window.FB.db, "config", "postView"),
+            (snap) => {
+              trackUsage("reads", 1);
+              if (!snap.exists()) { pvSyncLabel = "☁ Sync ready"; return; }
+              const d = snap.data() || {};
+              pvSyncLabel = "☁ Synced across your devices";
+              if (d.by === POSTVIEW_DEVICE_ID) return;
+              if ((d.updatedAt || 0) <= (postView.updatedAt || 0)) return;
+              postView = Object.assign(pvDefault(), {
+                sort: Array.isArray(d.sort) && d.sort.length ? d.sort : pvDefault().sort,
+                filters: d.filters && typeof d.filters === "object" ? d.filters : {},
+                presets: Array.isArray(d.presets) ? d.presets : [],
+                updatedAt: d.updatedAt || Date.now(),
+              });
+              try { localStorage.setItem(POSTVIEW_KEY, JSON.stringify(postView)); } catch (e) {}
+              pvShown = PV_PAGE;
+              if (currentRoute === "page-detail") pvRerender();
+            },
+            (err) => { console.warn("postView sync error", err); pvSyncLabel = "⚠ Sync unavailable — saved on this device only"; },
+          );
+        } catch (e) { console.warn("postView sync start failed", e); }
+      }
+      function pvStopSync() {
+        if (_pvUnsub) { try { _pvUnsub(); } catch (e) {} _pvUnsub = null; }
+      }
+
+      // ── hidden likes detection ───────────────────────────────────────────
+      // Instagram hides like counts on some posts; Apify reports -1 (stored as
+      // likesHidden). Older imports lost the sign and stored 1, so when a page has
+      // many posts with exactly 1 like we treat those as *suspected* hidden too.
+      let _pvSuspectCache = { arr: null, len: -1, set: new Set() };
+      // Pages where many posts have exactly 1 like are almost certainly hidden-likes
+      // pages imported before the -1 fix, so those 1s are treated as suspected hidden.
+      function pvSuspectPages() {
+        if (_pvSuspectCache.arr === state.posts && _pvSuspectCache.len === state.posts.length) return _pvSuspectCache.set;
+        const per = {};
+        state.posts.forEach((p) => {
+          if (p.deleted) return;
+          const o = per[String(p.pageId)] || (per[String(p.pageId)] = { n: 0, ones: 0 });
+          o.n++;
+          if (p.likesHidden !== true && Number(p.likesCount) === 1) o.ones++;
+        });
+        const set = new Set();
+        Object.keys(per).forEach((k) => { if (per[k].ones >= 3 && per[k].ones >= per[k].n * 0.1) set.add(k); });
+        _pvSuspectCache = { arr: state.posts, len: state.posts.length, set };
+        return set;
+      }
+      function pvIsLikesHidden(p) {
+        if (p.likesHidden === true) return true;
+        return Number(p.likesCount) === 1 && pvSuspectPages().has(String(p.pageId));
+      }
+      function pvHiddenSet(posts) {
+        const set = new Set();
+        let explicit = 0, suspected = 0;
+        (posts || []).forEach((p) => {
+          if (p.likesHidden === true) { set.add(p.id); explicit++; }
+          else if (pvIsLikesHidden(p)) { set.add(p.id); suspected++; }
+        });
+        return { set, explicit, suspected };
+      }
+      function pvFormatFields(row) {
+        // Apify: type Sidecar = carousel, Video + productType clips = reel, Image = single post
+        const pt = String(row.productType || "").toLowerCase(), ty = String(row.type || "").toLowerCase();
+        const f = pt === "clips" || ty === "video" ? "Reel" : ty === "sidecar" ? "Carousel" : ty === "image" ? "Single Post" : null;
+        return f ? { contentFormat: f } : {};
+      }
+      function pvParseLikes(raw) {
+        const s = String(raw == null ? "" : raw).trim();
+        if (/^-\s*\d/.test(s)) return { likesCount: null, likesHidden: true };
+        return { likesCount: toNum(raw) };
+      }
+      function pvLikesText(p) {
+        return pvIsLikesHidden(p)
+          ? '<span title="Likes hidden by the page (or suspected)" style="opacity:.8">🙈</span>'
+          : fmt(p.likesCount);
+      }
+      function pvHiddenBannerHtml(posts) {
+        const h = pvHiddenSet(posts);
+        const n = h.set.size;
+        if (!n) return "";
+        const parts = [];
+        if (h.explicit) parts.push(h.explicit + " confirmed");
+        if (h.suspected) parts.push(h.suspected + " suspected (likes = 1)");
+        return '<div class="card mb3" style="border-color:var(--yellow);background:rgba(250,204,21,.06);padding:10px 14px">' +
+          '<div style="font-size:13px;font-weight:700">🙈 ' + n + ' of ' + posts.length + ' posts have hidden likes</div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:3px">' + parts.join(" · ") +
+          ' — likes and ER for these posts are not real. They are excluded from the Best Time analysis. Filter them with Sort &amp; Filter → Likes hidden.</div></div>';
+      }
+
+      // ── metric / filter / sort engine ────────────────────────────────────
+      function pvNum(v) {
+        if (v === "" || v == null) return null;
+        const n = Number(v);
+        return isNaN(n) ? null : n;
+      }
+      function pvHasImage(p) { return !!(p.cloudinaryUrl || p.localImagePath || p.displayUrl); }
+      function pvSeason(p) { return p.season || getAutoSeason(p.postedAt) || null; }
+      function pvExtractHashtags(caption) {
+        return (String(caption || "").match(/#[^\s#!.,;:'"()\[\]{}<>?،؛]+/g) || []).map((h) => h.toLowerCase());
+      }
+      function pvMetric(p, key, page) {
+        switch (key) {
+          case "postedAt": return parseTimestamp(p.postedAt) || null;
+          case "likesCount":
+          case "commentsCount":
+          case "sharesCount":
+          case "repostsCount": {
+            if (key === "likesCount" && pvIsLikesHidden(p)) return null;
+            const v = p[key];
+            return v == null || v === "" ? null : Number(v) || 0;
+          }
+          case "engagementRate": { const e = calcER(p, page); return e == null ? null : e; }
+          case "totalEngagement": return (p.likesCount || 0) + (p.commentsCount || 0) + (p.sharesCount || 0) + (p.repostsCount || 0);
+          case "captionLength": return p.caption ? String(p.caption).length : 0;
+          case "rating": return p.rating != null ? Number(p.rating) || 0 : null;
+          case "openCount": return p.openCount || 0;
+        }
+        return null;
+      }
+      function pvSort(list, sortSpec, page) {
+        const specs = (sortSpec || []).filter((s) => s && s.key);
+        if (!specs.length) return list.slice();
+        const rows = list.map((p) => ({ p, v: specs.map((s) => pvMetric(p, s.key, page)) }));
+        rows.sort((a, b) => {
+          for (let i = 0; i < specs.length; i++) {
+            const av = a.v[i], bv = b.v[i];
+            if (av == null && bv == null) continue;
+            if (av == null) return 1;   // missing values always go last
+            if (bv == null) return -1;
+            if (av !== bv) return (av - bv) * (specs[i].dir === "asc" ? 1 : -1);
+          }
+          return 0;
+        });
+        return rows.map((r) => r.p);
+      }
+      function pvFilter(list, f, page) {
+        f = f || {};
+        const q = String(f.q || "").trim().toLowerCase();
+        const tags = String(f.tag || "").split(/[\s,]+/).map((t) => t.replace(/^#/, "").toLowerCase()).filter(Boolean);
+        let fromMs = null, toMs = null;
+        if (f.from) fromMs = new Date(f.from + "T00:00:00").getTime();
+        else if (f.days) fromMs = Date.now() - Number(f.days) * 86400000;
+        if (f.to) toMs = new Date(f.to + "T23:59:59.999").getTime();
+        const N = (k) => pvNum(f[k]);
+        const likesMin = N("likesMin"), likesMax = N("likesMax"), comMin = N("commentsMin"), comMax = N("commentsMax");
+        const shMin = N("sharesMin"), totMin = N("totalMin"), erMin = N("erMin"), erMax = N("erMax");
+        const hFrom = N("hourFrom"), hTo = N("hourTo"), ratingMin = N("ratingMin");
+        const types = f.types || [], formats = f.formats || [], seasons = f.seasons || [], wdays = f.weekdays || [];
+        let dupCount = null;
+        if (f.dupOnly) {
+          dupCount = {};
+          list.forEach((p) => {
+            const k = (p.postId && p.postId !== "" ? p.postId : null) || p.url || null;
+            if (k) dupCount[k] = (dupCount[k] || 0) + 1;
+          });
+        }
+        return list.filter((p) => {
+          if (q && !String(p.caption || "").toLowerCase().includes(q)) return false;
+          if (tags.length) {
+            const h = pvExtractHashtags(p.caption);
+            if (!tags.every((t) => h.some((x) => x.slice(1).startsWith(t)))) return false;
+          }
+          const ms = parseTimestamp(p.postedAt);
+          if (fromMs != null || toMs != null) {
+            if (!ms) return false;
+            if (fromMs != null && ms < fromMs) return false;
+            if (toMs != null && ms > toMs) return false;
+          }
+          if (wdays.length || hFrom != null || hTo != null) {
+            if (!ms) return false;
+            const d = new Date(ms), h = d.getHours();
+            if (wdays.length && !wdays.includes(d.getDay())) return false;
+            if (hFrom != null && hTo != null) {
+              if (hFrom <= hTo) { if (h < hFrom || h > hTo) return false; }
+              else if (h < hFrom && h > hTo) return false; // wraps midnight, e.g. 22 → 2
+            } else if (hFrom != null && h < hFrom) return false;
+            else if (hTo != null && h > hTo) return false;
+          }
+          const L = p.likesCount, C = p.commentsCount, S = p.sharesCount;
+          if (likesMin != null && !(L != null && Number(L) >= likesMin)) return false;
+          if (likesMax != null && !(L != null && Number(L) <= likesMax)) return false;
+          if (comMin != null && !(C != null && Number(C) >= comMin)) return false;
+          if (comMax != null && !(C != null && Number(C) <= comMax)) return false;
+          if (shMin != null && !(S != null && Number(S) >= shMin)) return false;
+          if (totMin != null && pvMetric(p, "totalEngagement") < totMin) return false;
+          if (erMin != null || erMax != null) {
+            const e = calcER(p, page);
+            if (e == null) return false;
+            if (erMin != null && e < erMin) return false;
+            if (erMax != null && e > erMax) return false;
+          }
+          if (types.length && !types.includes(p.postType || "__none")) return false;
+          if (formats.length && !formats.includes(p.contentFormat || "__none")) return false;
+          if (seasons.length && !seasons.includes(pvSeason(p) || "__none")) return false;
+          if (ratingMin != null && !((Number(p.rating) || 0) >= ratingMin)) return false;
+          if (f.hasCaption === "yes" && !String(p.caption || "").trim()) return false;
+          if (f.hasCaption === "no" && String(p.caption || "").trim()) return false;
+          if (f.hasImage === "yes" && !pvHasImage(p)) return false;
+          if (f.hasImage === "no" && pvHasImage(p)) return false;
+          if (f.analyzed === "yes" && !p.commentAnalyzedAt) return false;
+          if (f.analyzed === "no" && p.commentAnalyzedAt) return false;
+          if (f.hiddenLikes === "yes" && !pvIsLikesHidden(p)) return false;
+          if (f.hiddenLikes === "no" && pvIsLikesHidden(p)) return false;
+          if (dupCount) {
+            const k = (p.postId && p.postId !== "" ? p.postId : null) || p.url || null;
+            if (!(k && dupCount[k] >= 2)) return false;
+          }
+          if (f.uploadId && String(p.uploadId) !== String(f.uploadId)) return false;
+          return true;
+        });
+      }
+      function applyPostView(posts, page) {
+        let out = pvFilter(posts, postView.filters, page);
+        out = pvSort(out, postView.sort, page);
+        const top = pvNum(postView.filters && postView.filters.topN);
+        if (top) out = out.slice(0, top);
+        return out;
+      }
+
+      // ── state mutators (each one saves, syncs and re-renders) ────────────
+      function pvRerender() {
+        const ae = document.activeElement;
+        const id = ae && ae.id && ae.id.indexOf("pv-") === 0 ? ae.id : null;
+        const pos = id && ae.selectionStart != null ? [ae.selectionStart, ae.selectionEnd] : null;
+        renderWithScrollPreserve();
+        if (id) {
+          const el = document.getElementById(id);
+          if (el) { el.focus(); try { if (pos) el.setSelectionRange(pos[0], pos[1]); } catch (e) {} }
+        }
+      }
+      function pvCommit() { pvShown = PV_PAGE; pvSave(); pvRerender(); }
+      function pvSet(key, val) {
+        const f = postView.filters;
+        const v = typeof val === "string" ? val.trim() : val;
+        if (v === "" || v == null || v === false) delete f[key]; else f[key] = v;
+        if (key === "from" || key === "to") delete f.days;
+        if (key === "days") { delete f.from; delete f.to; }
+        pvCommit();
+      }
+      function pvDebounce(key, val) {
+        clearTimeout(_pvDeb);
+        _pvDeb = setTimeout(() => pvSet(key, val), 350);
+      }
+      function pvToggleList(key, enc) {
+        const f = postView.filters;
+        let val = decodeURIComponent(enc);
+        if (key === "weekdays") val = Number(val);
+        const arr = Array.isArray(f[key]) ? f[key].slice() : [];
+        const i = arr.indexOf(val);
+        if (i >= 0) arr.splice(i, 1); else arr.push(val);
+        if (arr.length) f[key] = arr; else delete f[key];
+        pvCommit();
+      }
+      function pvClearKeys(keys) {
+        keys.split(",").forEach((k) => { delete postView.filters[k]; });
+        pvCommit();
+      }
+      function pvResetAll() {
+        postView.filters = {};
+        postView.sort = pvDefault().sort;
+        pvCommit();
+      }
+      function pvTogglePanel() { pvOpen = !pvOpen; renderWithScrollPreserve(); }
+      function pvSetSortKey(i, key) {
+        const s = postView.sort;
+        if (!key) s.splice(i);
+        else if (!s[i]) s[i] = { key, dir: "desc" };
+        else s[i].key = key;
+        if (!s.length) s.push({ key: "likesCount", dir: "desc" });
+        pvCommit();
+      }
+      function pvSortKey0(v) { pvSetSortKey(0, v); }
+      function pvSortKey1(v) { pvSetSortKey(1, v); }
+      function pvSortKey2(v) { pvSetSortKey(2, v); }
+      function pvUploadSel(v) { pvSet("uploadId", v); }
+      function pvToggleDir(i) {
+        const s = postView.sort[i];
+        if (s) { s.dir = s.dir === "asc" ? "desc" : "asc"; pvCommit(); }
+      }
+      function pvQuickSort(key) { postView.sort = [{ key, dir: "desc" }]; pvCommit(); }
+      function pvShowMore(all) {
+        pvShown = all ? Infinity : pvShown + PV_PAGE;
+        renderWithScrollPreserve();
+      }
+
+      // ── saved views ──────────────────────────────────────────────────────
+      function pvSaveViewModal() {
+        showModal(`
+    <div class="modal-title">Save current view <button onclick="closeModal()" style="background:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button></div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Saves the current sort + filters. It syncs to all your devices.</div>
+    <div class="form-row"><label class="form-label">View name</label><input id="pv-preset-name" placeholder="e.g. Top reels last 30 days"></div>
+    <div class="flex gap2 justify-between mt3">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="pvSaveView()">💾 Save</button>
+    </div>`);
+        setTimeout(() => { const el = document.getElementById("pv-preset-name"); if (el) el.focus(); }, 50);
+      }
+      function pvSaveView() {
+        const el = document.getElementById("pv-preset-name");
+        const name = el ? el.value.trim() : "";
+        if (!name) { showToast("Enter a name for the view"); return; }
+        postView.presets = (postView.presets || []).filter((p) => p.name !== name);
+        postView.presets.push({ id: "v" + Date.now().toString(36), name, sort: pvClone(postView.sort), filters: pvClone(postView.filters) });
+        pvSave();
+        closeModal();
+        pvRerender();
+        showToast("✅ View saved: " + name);
+      }
+      function pvLoadPreset(id) {
+        const p = (postView.presets || []).find((x) => x.id === id);
+        if (!p) return;
+        postView.sort = pvClone(p.sort && p.sort.length ? p.sort : pvDefault().sort);
+        postView.filters = pvClone(p.filters || {});
+        pvCommit();
+      }
+      function pvDeletePreset(id) {
+        if (!confirm("Delete this saved view?")) return;
+        postView.presets = (postView.presets || []).filter((p) => p.id !== id);
+        pvSave();
+        pvRerender();
+      }
+
+      // ── UI ───────────────────────────────────────────────────────────────
+      function pvChip(label, on, js) {
+        return '<button type="button" class="pv-chip ' + (on ? "on" : "") + '" onclick="event.stopPropagation();' + js + '">' + label + "</button>";
+      }
+      function pvTri(key, label) {
+        const v = postView.filters[key] || "";
+        return '<div class="pv-row" style="margin-bottom:6px"><span class="pv-lbl" style="margin:0;min-width:104px">' + label + "</span>" +
+          pvChip("Any", !v, "pvSet('" + key + "','')") + pvChip("Yes", v === "yes", "pvSet('" + key + "','yes')") +
+          pvChip("No", v === "no", "pvSet('" + key + "','no')") + "</div>";
+      }
+      function pvNumIn(key, ph) {
+        const v = postView.filters[key];
+        return '<input id="pv-' + key + '" class="pv-num" type="number" inputmode="decimal" placeholder="' + ph +
+          '" value="' + (v != null ? escHtml(String(v)) : "") + '" oninput="pvDebounce(\'' + key + '\',this.value)">';
+      }
+      function pvDirLabel(s) {
+        if (s.key === "postedAt") return s.dir === "desc" ? "↓ Newest first" : "↑ Oldest first";
+        return s.dir === "desc" ? "↓ High → Low" : "↑ Low → High";
+      }
+      function pvActiveChips(f) {
+        const out = [];
+        const rm = (label, js) => out.push([label, js]);
+        if (f.q) rm('🔍 "' + escHtml(f.q) + '"', "pvClearKeys('q')");
+        if (f.tag) rm("# " + escHtml(f.tag), "pvClearKeys('tag')");
+        if (f.days) rm("📅 last " + f.days + " days", "pvClearKeys('days')");
+        if (f.from || f.to) rm("📅 " + (f.from || "…") + " → " + (f.to || "…"), "pvClearKeys('from,to')");
+        if (f.likesMin || f.likesMax) rm("❤️ " + (f.likesMin || "0") + " – " + (f.likesMax || "∞"), "pvClearKeys('likesMin,likesMax')");
+        if (f.commentsMin || f.commentsMax) rm("💬 " + (f.commentsMin || "0") + " – " + (f.commentsMax || "∞"), "pvClearKeys('commentsMin,commentsMax')");
+        if (f.sharesMin) rm("↗ shares ≥ " + f.sharesMin, "pvClearKeys('sharesMin')");
+        if (f.totalMin) rm("Σ total ≥ " + f.totalMin, "pvClearKeys('totalMin')");
+        if (f.erMin || f.erMax) rm("ER " + (f.erMin || "0") + "% – " + (f.erMax || "∞") + "%", "pvClearKeys('erMin,erMax')");
+        (f.types || []).forEach((v) => rm("🏷️ " + (v === "__none" ? "Untagged" : escHtml(v)), "pvToggleList('types','" + encodeURIComponent(v) + "')"));
+        (f.formats || []).forEach((v) => rm("🎬 " + (v === "__none" ? "No format" : escHtml(v)), "pvToggleList('formats','" + encodeURIComponent(v) + "')"));
+        (f.seasons || []).forEach((v) => rm((SEASON_META[v] ? SEASON_META[v].label : "No season"), "pvToggleList('seasons','" + encodeURIComponent(v) + "')"));
+        (f.weekdays || []).forEach((v) => rm("📆 " + PV_DAYS[v], "pvToggleList('weekdays','" + v + "')"));
+        if (f.hourFrom != null || f.hourTo != null) rm("🕒 " + (f.hourFrom || "0") + "h – " + (f.hourTo || "23") + "h", "pvClearKeys('hourFrom,hourTo')");
+        if (f.ratingMin) rm("★ ≥ " + f.ratingMin, "pvClearKeys('ratingMin')");
+        if (f.hasCaption) rm("📝 caption: " + f.hasCaption, "pvClearKeys('hasCaption')");
+        if (f.hasImage) rm("🖼 image: " + f.hasImage, "pvClearKeys('hasImage')");
+        if (f.analyzed) rm("💬 comment-analyzed: " + f.analyzed, "pvClearKeys('analyzed')");
+        if (f.hiddenLikes) rm("🙈 hidden likes: " + f.hiddenLikes, "pvClearKeys('hiddenLikes')");
+        if (f.dupOnly) rm("🔁 duplicates only", "pvClearKeys('dupOnly')");
+        if (f.uploadId) rm("📂 one file", "pvClearKeys('uploadId')");
+        if (f.topN) rm("🏆 top " + f.topN, "pvClearKeys('topN')");
+        return out;
+      }
+      function pvPanelHtml(posts, viewPosts, page) {
+        const f = postView.filters || {};
+        const chips = pvActiveChips(f);
+        const sort = postView.sort && postView.sort.length ? postView.sort : pvDefault().sort;
+        const head =
+          '<div class="pv-row">' +
+          '<input id="pv-q" class="pv-in" type="search" placeholder="🔍 Search captions…" style="flex:1;min-width:150px" value="' + escHtml(f.q || "") + '" oninput="pvDebounce(\'q\',this.value)">' +
+          '<button type="button" class="pv-chip ' + (pvOpen || chips.length ? "on" : "") + '" onclick="event.stopPropagation();pvTogglePanel()">⚙ Sort &amp; Filter' + (chips.length ? " (" + chips.length + ")" : "") + " " + (pvOpen ? "▴" : "▾") + "</button>" +
+          "</div>";
+        const chipsHtml = chips.length
+          ? '<div class="pv-row" style="margin-top:8px">' +
+            chips.map((c) => '<span class="pv-chip on" style="display:inline-flex;gap:6px;align-items:center">' + c[0] +
+              '<span style="cursor:pointer;opacity:.7" onclick="event.stopPropagation();' + c[1] + '">✕</span></span>').join("") +
+            '<button type="button" class="pv-chip" onclick="event.stopPropagation();pvResetAll()">Reset all</button></div>'
+          : "";
+        const summary = '<div style="font-size:11px;color:var(--dim);margin-top:8px">' + viewPosts.length + " of " + posts.length +
+          " posts match · sorted by " + sort.map((s) => (PV_SORT_KEYS.find((k) => k[0] === s.key) || [0, s.key])[1] + " " + (s.dir === "asc" ? "↑" : "↓")).join(", then ") + "</div>";
+        if (!pvOpen) return '<div class="card mb2" style="padding:12px">' + head + chipsHtml + summary + "</div>";
+
+        // sort levels
+        let sortHtml = "";
+        for (let i = 0; i < Math.min(sort.length + 1, 3); i++) {
+          const s = sort[i];
+          const opts = (i === 0 ? [] : [["", "— none —"]]).concat(PV_SORT_KEYS);
+          sortHtml += '<div class="pv-row" style="margin-bottom:6px"><span class="pv-lbl" style="margin:0;min-width:56px">' + (i === 0 ? "Sort by" : "Then by") + "</span>" +
+            customSelectHtml("pv-sort-" + i, opts, s ? s.key : "", "pvSortKey" + i) +
+            (s ? '<button type="button" class="pv-chip" onclick="event.stopPropagation();pvToggleDir(' + i + ')">' + pvDirLabel(s) + "</button>" : "") + "</div>";
+        }
+        const quick = '<div class="pv-row" style="margin-top:4px">' +
+          pvChip("🔥 Top ER", 0, "pvQuickSort('engagementRate')") + pvChip("❤️ Most liked", 0, "pvQuickSort('likesCount')") +
+          pvChip("💬 Most commented", 0, "pvQuickSort('commentsCount')") + pvChip("🆕 Newest", 0, "pvQuickSort('postedAt')") + "</div>";
+
+        // date
+        const dateHtml = '<div class="pv-row">' +
+          [7, 30, 90, 365].map((d) => pvChip("Last " + (d === 365 ? "year" : d + "d"), Number(f.days) === d, "pvSet('days'," + d + ")")).join("") +
+          pvChip("All time", !f.days && !f.from && !f.to, "pvClearKeys('days,from,to')") + "</div>" +
+          '<div class="pv-row" style="margin-top:6px"><input id="pv-from" class="pv-in" type="date" value="' + escHtml(f.from || "") + '" onchange="pvSet(\'from\',this.value)">' +
+          '<span style="color:var(--dim)">→</span><input id="pv-to" class="pv-in" type="date" value="' + escHtml(f.to || "") + '" onchange="pvSet(\'to\',this.value)"></div>';
+
+        // metrics
+        const metricsHtml = '<div class="pv-row">' +
+          '<span class="pv-sub">❤️ Likes</span>' + pvNumIn("likesMin", "min") + pvNumIn("likesMax", "max") +
+          '<span class="pv-sub">💬 Comments</span>' + pvNumIn("commentsMin", "min") + pvNumIn("commentsMax", "max") + "</div>" +
+          '<div class="pv-row" style="margin-top:6px">' +
+          '<span class="pv-sub">↗ Shares ≥</span>' + pvNumIn("sharesMin", "min") +
+          '<span class="pv-sub">Σ Total ≥</span>' + pvNumIn("totalMin", "min") +
+          '<span class="pv-sub">ER %</span>' + pvNumIn("erMin", "min") + pvNumIn("erMax", "max") + "</div>";
+
+        // tags
+        const cnt = (fn) => posts.filter(fn).length;
+        const typeVals = Array.from(new Set(PV_TYPE_OPTIONS.concat(posts.map((p) => p.postType).filter(Boolean))));
+        const typesHtml = typeVals.map((v) => {
+          const c = cnt((p) => p.postType === v);
+          const on = (f.types || []).includes(v);
+          return c || on ? pvChip(escHtml(v) + ' <span style="opacity:.6">' + c + "</span>", on, "pvToggleList('types','" + encodeURIComponent(v) + "')") : "";
+        }).join("") + pvChip("Untagged " + '<span style="opacity:.6">' + cnt((p) => !p.postType) + "</span>", (f.types || []).includes("__none"), "pvToggleList('types','__none')");
+        const fmtVals = Array.from(new Set(["Reel", "Carousel", "Single Post"].concat(posts.map((p) => p.contentFormat).filter(Boolean))));
+        const formatsHtml = fmtVals.map((v) => {
+          const c = cnt((p) => p.contentFormat === v);
+          const on = (f.formats || []).includes(v);
+          return c || on ? pvChip(escHtml(v) + ' <span style="opacity:.6">' + c + "</span>", on, "pvToggleList('formats','" + encodeURIComponent(v) + "')") : "";
+        }).join("") + pvChip("No format " + '<span style="opacity:.6">' + cnt((p) => !p.contentFormat) + "</span>", (f.formats || []).includes("__none"), "pvToggleList('formats','__none')");
+        const seasonsHtml = Object.keys(SEASON_META).map((k) =>
+          pvChip(SEASON_META[k].label + ' <span style="opacity:.6">' + cnt((p) => pvSeason(p) === k) + "</span>", (f.seasons || []).includes(k), "pvToggleList('seasons','" + k + "')")).join("");
+        const daysHtml = PV_DAYS.map((d, i) => pvChip(d, (f.weekdays || []).includes(i), "pvToggleList('weekdays','" + i + "')")).join("");
+        const ratingHtml = [1, 2, 3, 4, 5].map((n) => pvChip("★ " + n + "+", Number(f.ratingMin) === n, "pvSet('ratingMin'," + (Number(f.ratingMin) === n ? "''" : n) + ")")).join("");
+
+        // toggles + source
+        const uploads = (typeof state !== "undefined" ? state.uploads : []).filter((u) => page && u.pageId === page.id);
+        const uploadOpts = [["", "All files"]].concat(uploads.map((u) => [String(u.id), escHtml(u.originalName || "Upload " + u.id)]));
+        const togglesHtml = pvTri("hasCaption", "Has caption") + pvTri("hasImage", "Has image") + pvTri("analyzed", "Comment-analyzed") + pvTri("hiddenLikes", "Likes hidden") +
+          '<div class="pv-row" style="margin-bottom:6px"><span class="pv-lbl" style="margin:0;min-width:104px">Duplicates</span>' +
+          pvChip("Only duplicates", !!f.dupOnly, "pvSet('dupOnly'," + (f.dupOnly ? "''" : "true") + ")") + "</div>" +
+          '<div class="pv-row"><span class="pv-lbl" style="margin:0;min-width:104px">Source file</span>' + customSelectHtml("pv-upload", uploadOpts, String(f.uploadId || ""), "pvUploadSel") + "</div>";
+        const topHtml = '<div class="pv-row">' + [10, 20, 50, 100].map((n) => pvChip("Top " + n, Number(f.topN) === n, "pvSet('topN'," + (Number(f.topN) === n ? "''" : n) + ")")).join("") + pvChip("All", !f.topN, "pvClearKeys('topN')") + "</div>";
+
+        const presets = postView.presets || [];
+        const presetsHtml = '<div class="pv-row">' + presets.map((pr) =>
+          '<span class="pv-chip" style="display:inline-flex;gap:8px;align-items:center"><span style="cursor:pointer" onclick="event.stopPropagation();pvLoadPreset(\'' + pr.id + '\')">📌 ' + escHtml(pr.name) +
+          '</span><span style="opacity:.6;cursor:pointer" onclick="event.stopPropagation();pvDeletePreset(\'' + pr.id + '\')">✕</span></span>').join("") +
+          '<button type="button" class="pv-chip" onclick="event.stopPropagation();pvSaveViewModal()">💾 Save current view</button></div>';
+
+        const sec = (title, body) => '<div class="pv-sec"><div class="pv-lbl">' + title + "</div>" + body + "</div>";
+        return '<div class="card mb2" style="padding:12px">' + head + chipsHtml + summary +
+          '<div class="pv-grid">' +
+          sec("↕ Sort", sortHtml + quick) + sec("📅 Date posted", dateHtml) + sec("📊 Metrics", metricsHtml) +
+          sec("🏷️ Post type", '<div class="pv-row">' + typesHtml + "</div>") + sec("🎬 Format", '<div class="pv-row">' + formatsHtml + "</div>") +
+          sec("🌤 Season", '<div class="pv-row">' + seasonsHtml + "</div>") + sec("📆 Weekday", '<div class="pv-row">' + daysHtml + "</div>") +
+          sec("🕒 Hour of day", '<div class="pv-row">' + pvNumIn("hourFrom", "from 0") + '<span style="color:var(--dim)">→</span>' + pvNumIn("hourTo", "to 23") + "</div>") +
+          sec("★ Rating", '<div class="pv-row">' + ratingHtml + "</div>") + sec("# Hashtags", '<input id="pv-tag" class="pv-in" style="width:100%" placeholder="#dress #summer (all must match)" value="' + escHtml(f.tag || "") + '" oninput="pvDebounce(\'tag\',this.value)">') +
+          sec("✔ Conditions", togglesHtml) + sec("🏆 Limit", topHtml) +
+          "</div>" +
+          '<div class="pv-sec"><div class="pv-lbl">📌 Saved views</div>' + presetsHtml + "</div>" +
+          '<div style="font-size:10px;color:var(--dim);margin-top:10px">' + pvSyncLabel + "</div></div>";
+      }
+      function pvMoreHtml(total) {
+        if (total <= pvShown) return "";
+        return '<div style="text-align:center;margin:14px 0"><button class="btn btn-ghost" onclick="pvShowMore(false)">Show ' + Math.min(PV_PAGE, total - pvShown) +
+          ' more</button> <button class="btn btn-ghost" onclick="pvShowMore(true)">Show all (' + total + ')</button>' +
+          '<div class="text-muted text-sm" style="margin-top:6px">Showing ' + pvShown + " of " + total + "</div></div>";
       }
 
       function showAddPageModal() {
