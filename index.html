@@ -3456,6 +3456,14 @@
         return [...ids];
       }
 
+      // يرجّع هيدرز الطلب للـ Worker: توكن تسجيل دخول Firebase (لا يوجد أي سر ثابت بالملف)
+      async function workerAuthHeaders() {
+        const user = window.FB && window.FB.auth && window.FB.auth.currentUser;
+        if (!user) throw new Error("لازم تكون مسجّل دخول");
+        const token = await user.getIdToken();
+        return { "Content-Type": "application/json", Authorization: "Bearer " + token };
+      }
+
       function formatBytes(bytes) {
         if (!bytes) return "0 MB";
         return (bytes / (1024 * 1024)).toFixed(1) + " MB";
@@ -3472,7 +3480,7 @@
           const usedPublicIds = collectUsedCloudinaryPublicIds();
           const findRes = await fetch(`${CLEANUP_WORKER_URL}/find-unused`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "x-app-secret": SCRAPPER_BACKEND_SECRET },
+            headers: await workerAuthHeaders(),
             body: JSON.stringify({ usedPublicIds }),
           });
           if (!findRes.ok) throw new Error(`فشل الفحص (${findRes.status}): ${await findRes.text().catch(() => "")}`);
@@ -3491,7 +3499,7 @@
           if (btn) btn.textContent = "🗑 جارِ الحذف...";
           const delRes = await fetch(`${CLEANUP_WORKER_URL}/delete-images`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "x-app-secret": SCRAPPER_BACKEND_SECRET },
+            headers: await workerAuthHeaders(),
             body: JSON.stringify({ publicIds: info.unusedPublicIds }),
           });
           if (!delRes.ok) throw new Error(`فشل الحذف (${delRes.status}): ${await delRes.text().catch(() => "")}`);
@@ -3527,7 +3535,7 @@
         try {
           const res = await fetch(`${CLEANUP_WORKER_URL}/delete-all`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "x-app-secret": SCRAPPER_BACKEND_SECRET },
+            headers: await workerAuthHeaders(),
             body: JSON.stringify({}),
           });
           if (!res.ok) throw new Error(`فشل الحذف (${res.status}): ${await res.text().catch(() => "")}`);
