@@ -3429,12 +3429,6 @@
       const CLOUDINARY_UPLOAD_PRESET = "scrapper-app";
       const CLOUDINARY_UPLOAD_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
 
-      // ── سيرفر backend صغير (Render) وظيفته الوحيدة حذف الصور فعليًا من
-      // Cloudinary — لازم يمر عبره لأن الحذف يحتاج API Secret ما ينحط أبدًا
-      // بكود واجهة عامة زي هذا الملف (راجع mekosindi99/scrapper-backend).
-      const SCRAPPER_BACKEND_URL = "https://scrapper-backend-wklb.onrender.com";
-      const SCRAPPER_BACKEND_SECRET = "scr_9f2kLp8Xz1mQwR7vTb3nJh5cYd0aVe6u";
-
       // ── سيرفر بديل (Cloudflare Worker) مجاني بالكامل ولا يعمل إلا لحظة
       // الاستدعاء، خصيصاً لميزة "تنظيف الصور غير المستخدمة على Cloudinary".
       // انشره حسب التعليمات في cloudinary-cleanup-worker.js وألصق رابطه هنا.
@@ -3573,36 +3567,21 @@
         }
       }
 
+      // ── حذف فوري عند حذف منشور/رفعة (عكس 🧹 Cleanup اللي يحذف دفعة واحدة لاحقاً) ──
+      // يستخدم نفس Cloudflare Worker ونفس توكن Firebase، فلا يوجد أي سر بالملف.
       async function deleteImageFromCloudinary(url) {
-        if (!url) return;
-        try {
-          const res = await fetch(`${SCRAPPER_BACKEND_URL}/api/delete-image`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-app-secret": SCRAPPER_BACKEND_SECRET,
-            },
-            body: JSON.stringify({ url }),
-          });
-          if (!res.ok) {
-            console.warn("Cloudinary image delete failed", res.status, await res.text().catch(() => ""));
-          }
-        } catch (err) {
-          console.warn("Cloudinary image delete request failed", err);
-        }
+        return deleteImagesFromCloudinary([url]);
       }
 
       async function deleteImagesFromCloudinary(urls) {
-        const list = (urls || []).filter(Boolean);
-        if (!list.length) return;
+        const publicIds = (urls || []).map(cloudinaryPublicIdFromUrl).filter(Boolean);
+        if (!publicIds.length) return;
+        if (!CLEANUP_WORKER_URL) { console.warn("Cloudinary delete skipped: CLEANUP_WORKER_URL not set"); return; }
         try {
-          const res = await fetch(`${SCRAPPER_BACKEND_URL}/api/delete-images`, {
+          const res = await fetch(`${CLEANUP_WORKER_URL}/delete-images`, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-app-secret": SCRAPPER_BACKEND_SECRET,
-            },
-            body: JSON.stringify({ urls: list }),
+            headers: await workerAuthHeaders(),
+            body: JSON.stringify({ publicIds }),
           });
           if (!res.ok) {
             console.warn("Cloudinary bulk image delete failed", res.status, await res.text().catch(() => ""));
@@ -7860,7 +7839,7 @@
       <div class="upload-row-v2-head" onclick="toggleUploadExpanded(${u.id})">
         <div class="upload-icon">📁</div>
         <div class="upload-info" style="min-width:0;flex:1">
-          <div class="upload-name" style="display:flex;align-items:center;gap:6px">${u.originalName} ${hiddenBadge}</div>
+          <div class="upload-name" style="display:flex;align-items:center;gap:6px">${escHtml(u.originalName || "")} ${hiddenBadge}</div>
           <div class="upload-meta">${fmtSize(u.fileSize)} · ${u.postCount} posts</div>
         </div>
         <span class="badge ${typeColor}" style="flex-shrink:0">${_fileType.toUpperCase()}</span>
@@ -9828,7 +9807,7 @@
 
         showModal(`
     <div class="modal-title" style="font-size:15px">
-      🗂 Column Mapping — <span style="color:var(--primary);font-size:13px">${file.name}</span>
+      🗂 Column Mapping — <span style="color:var(--primary);font-size:13px">${escHtml(file.name)}</span>
       <button onclick="closeModal()" style="background:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
     </div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
@@ -9920,7 +9899,7 @@
         if (dz) {
           dz.classList.add("has-file");
           document.getElementById("dz-content").innerHTML =
-            `<div style="font-size:36px">📄</div><div style="font-weight:600;margin-bottom:4px" dir="ltr">${file.name}</div><div class="text-muted text-sm">${fmtSize(file.size)}</div>`;
+            `<div style="font-size:36px">📄</div><div style="font-weight:600;margin-bottom:4px" dir="ltr">${escHtml(file.name)}</div><div class="text-muted text-sm">${fmtSize(file.size)}</div>`;
         }
         if (progressEl) progressEl.classList.remove("hidden");
         if (resultEl) resultEl.innerHTML = "";
@@ -11104,7 +11083,7 @@
           .join("");
         showModal(`
     <div class="modal-title">Import Post Data <button onclick="closeModal()" style="background:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button></div>
-    <div style="margin-bottom:10px;color:var(--muted);font-size:13px">The file "${file.name}" will be imported as posts. Choose the page to add them to:</div>
+    <div style="margin-bottom:10px;color:var(--muted);font-size:13px">The file "${escHtml(file.name)}" will be imported as posts. Choose the page to add them to:</div>
     <div class="form-row"><label class="form-label">Page *</label><select id="m-import-page">${options}</select></div>
     <div id="m-import-progress" class="hidden mt2"><div class="progress-bar"><div id="m-import-progress-fill" class="progress-fill" style="width:0%"></div></div><div id="m-import-progress-label" class="text-sm text-muted mt1"></div></div>
     <div id="m-import-result"></div>
